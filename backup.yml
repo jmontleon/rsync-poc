@@ -1,6 +1,7 @@
 - hosts: localhost
   gather_facts: false
   vars:
+    backup_resources: true
     rsync_deployment:
       apiVersion: apps/v1
       kind: Deployment
@@ -44,6 +45,69 @@
     file:
       state: directory
       path: "{{ playbook_dir }}/{{ namespace }}/resources"
+
+  - when: backup_resources
+    block:
+    - name: Get APIs
+      community.kubernetes.k8s_cluster_info:
+      register: apis
+
+    - name: Get resources
+      k8s_info:
+        api_version: "{{ item.value.api_version }}"
+        kind: "{{ item.value.kind }}"
+        namespace: "{{ namespace }}"
+      register: resources
+      loop: "{{ apis.apis | dict2items }}"
+      loop_control:
+        label: "{{ item.value.kind }}.{{ item.value.api_version }}"
+      when:
+      - item.value.namespaced
+      - item.value.kind != 'Binding'
+      - item.value.kind != 'ImageStreamImport'
+      - item.value.kind != 'ImageStreamMapping'
+      - item.value.kind != 'LocalResourceAccessReview'
+      - item.value.kind != 'LocalSubjectAccessReview'
+      - item.value.kind != 'PersistentVolumeClaim'
+      - item.value.kind != 'PodSecurityPolicyReview'
+      - item.value.kind != 'PodSecurityPolicySelfSubjectReview'
+      - item.value.kind != 'PodSecurityPolicySubjectReview'
+      - item.value.kind != 'SelfSubjectRulesReview'
+      - item.value.kind != 'SubjectRulesReview'
+
+    - name: Initialize resource lists
+      set_fact:
+        pruned_resources: []
+        unpruned_resources: []
+
+    - name: Collect unmodified resources
+      set_fact:
+        unpruned_resources: "{{ unpruned_resources + item.resources }}"
+      with_flattened: "{{ resources.results }}"
+      when:
+      - item.resources is defined
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Clean resources
+      set_fact:
+        pruned_resources: "{{ pruned_resources + new_item }}"
+      with_items: "{{ unpruned_resources }}"
+      vars:
+        cleanup:
+          metadata: "{{ item.metadata|combine({'resourceVersion': omit, 'uid': omit}) }}"
+        new_item:
+        - "{{ item|combine(cleanup) }}"
+      loop_control:
+        label: "{{ item.metadata.name }} {{ item.kind }} {{ item.apiVersion }}"
+
+    - name: Write resources out
+      copy:
+        dest: "{{ playbook_dir }}/{{ namespace }}/resources/{{ item.kind}}-{{ item.metadata.name }}.yml"
+        content: "{{ item | to_yaml }}"
+      with_items: "{{ pruned_resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
 
   - name: Retrieve namespace
     k8s_info:

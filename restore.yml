@@ -110,8 +110,7 @@
     - name: Find resource definitions
       find:
         paths: "{{ playbook_dir }}/{{ namespace }}/resources/"
-        patterns: '*'
-        excludes: "PersistentVolumeClaims,namespace"
+        excludes: 'PersistentVolumeClaim-*,namespace.yml'
       register: resource_find
 
   - name: Create Resources

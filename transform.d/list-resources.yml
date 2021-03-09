@@ -1,0 +1,13 @@
+- name: Find resource definitions
+  find:
+    paths: "{{ playbook_dir }}/{{ namespace }}/resources"
+    patterns: '*'
+  register: resource
+
+- name: Run Transforms
+  debug:
+    msg: "{{ r.path }}"
+  with_items: "{{ resource.files }}"
+  loop_control:
+    label: "{{ r.path }}"
+    loop_var: r

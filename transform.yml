@@ -1,0 +1,15 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+  tasks:
+  - name: Find resource definitions
+    find:
+      paths: "{{ playbook_dir }}/transform.d/"
+      patterns: '*'
+    register: transform_d
+    
+  - name: Run Transforms
+    include_tasks: "{{ item.path }}"
+    with_items: "{{ transform_d.files }}"
+    loop_control:
+      label: "{{ item.path }}"

@@ -40,6 +40,12 @@
     set_fact:
       namespace_path: "{{ playbook_dir }}/{{ namespace }}/resources/namespace.yml"
 
+  - name: Update project API
+    replace:
+      path: "{{ namespace_path }}"
+      regexp: '^apiVersion: v1'
+      replace: 'apiVersion: project.openshift.io/v1'
+
   - name: Create namespace
     k8s:
       definition: "{{ lookup('file', namespace_path) }}"

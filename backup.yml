@@ -3,7 +3,12 @@
   vars:
     backup_resources: true
     excluded_resources:
+    - Alertmanager
     - Binding
+    - Bundle
+    - BundleBinding
+    - BundleInstance
+    - EgressNetworkPolicy
     - EndpointSlice
     - Event
     - ImageStreamImport
@@ -18,8 +23,13 @@
     - PodSecurityPolicyReview
     - PodSecurityPolicySelfSubjectReview
     - PodSecurityPolicySubjectReview
+    - PodTemplate
+    - Prometheus
+    - PrometheusRule
     - ReplicaSet
+    - ReplicationControllerDummy
     - SelfSubjectRulesReview
+    - ServiceMonitor
     - SubjectRulesReview
     quiesce_apps: true
     unquiesce_apps: true

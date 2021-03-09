@@ -82,7 +82,7 @@
     register: pods
 
   - name: rsync content to cluster
-    shell: oc rsync -n {{ namespace }} {{ playbook_dir }}/{{ namespace }}/data/{{ item.metadata.labels.claim }}/ {{ item.metadata.name }}:/mnt/
+    shell: oc rsync --no-perms -n {{ namespace }} {{ playbook_dir }}/{{ namespace }}/data/{{ item.metadata.labels.claim }}/ {{ item.metadata.name }}:/mnt/
     with_items: "{{ pods.resources }}"
     register: command_result
     retries: 10

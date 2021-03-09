@@ -18,5 +18,8 @@ Transform:
 Destination cluster:
 - `ansible-playbook restore.yml -e namespace=robot-shop`
 
+# Demo
+[![demo](https://asciinema.org/a/t9Lb2sTb4vggl6W6wjU74BGAv.svg)](https://asciinema.org/a/t9Lb2sTb4vggl6W6wjU74BGAv?autoplay=1&speed=5)
+
 # Issues
 - Not all APIs are found as expected: https://github.com/ansible-collections/community.kubernetes/issues/380

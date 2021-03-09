@@ -134,6 +134,9 @@
       - not(item.kind == 'RoleBinding' and item.metadata.name == 'system:deployers')
       - not(item.kind == 'RoleBinding' and item.metadata.name == 'system:image-builders')
       - not(item.kind == 'RoleBinding' and item.metadata.name == 'system:image-pullers')
+      - not(item.kind == 'ServiceAccount' and item.metadata.name == 'builder')
+      - not(item.kind == 'ServiceAccount' and item.metadata.name == 'default')
+      - not(item.kind == 'ServiceAccount' and item.metadata.name == 'deployer')
 
   - name: Retrieve namespace
     k8s_info:

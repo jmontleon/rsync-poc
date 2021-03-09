@@ -1,12 +1,14 @@
 - name: Find resource definitions
   find:
     paths: "{{ playbook_dir }}/{{ namespace }}/resources"
-    patterns: '*'
+    patterns: 'Deployment-*'
   register: resource
 
 - name: Run Transforms
-  debug:
-    msg: "{{ r.path }}"
+  replace:
+    path: "{{ r.path }}"
+    regexp: '^apiVersion: .*/v1beta1'
+    replace: 'apiVersion: apps/v1'
   with_items: "{{ resource.files }}"
   loop_control:
     label: "{{ r.path }}"

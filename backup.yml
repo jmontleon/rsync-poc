@@ -2,6 +2,27 @@
   gather_facts: false
   vars:
     backup_resources: true
+    excluded_resources:
+    - Binding
+    - EndpointSlice
+    - Event
+    - ImageStreamImport
+    - ImageStreamMapping
+    - InstallPlan
+    - LocalResourceAccessReview
+    - LocalSubjectAccessReview
+    - PackageManifest
+    - PersistentVolumeClaim
+    - Pod
+    - PodMetrics
+    - PodSecurityPolicyReview
+    - PodSecurityPolicySelfSubjectReview
+    - PodSecurityPolicySubjectReview
+    - ReplicaSet
+    - SelfSubjectRulesReview
+    - SubjectRulesReview
+    quiesce_apps: true
+    unquiesce_apps: true
     rsync_deployment:
       apiVersion: apps/v1
       kind: Deployment
@@ -63,17 +84,7 @@
         label: "{{ item.value.kind }}.{{ item.value.api_version }}"
       when:
       - item.value.namespaced
-      - item.value.kind != 'Binding'
-      - item.value.kind != 'ImageStreamImport'
-      - item.value.kind != 'ImageStreamMapping'
-      - item.value.kind != 'LocalResourceAccessReview'
-      - item.value.kind != 'LocalSubjectAccessReview'
-      - item.value.kind != 'PersistentVolumeClaim'
-      - item.value.kind != 'PodSecurityPolicyReview'
-      - item.value.kind != 'PodSecurityPolicySelfSubjectReview'
-      - item.value.kind != 'PodSecurityPolicySubjectReview'
-      - item.value.kind != 'SelfSubjectRulesReview'
-      - item.value.kind != 'SubjectRulesReview'
+      - item.value.kind not in excluded_resources
 
     - name: Initialize resource lists
       set_fact:
@@ -130,7 +141,7 @@
 
   - name: Write namespace out
     copy:
-      dest: "{{ playbook_dir }}/{{ namespace }}/resources/nammespace.yml"
+      dest: "{{ playbook_dir }}/{{ namespace }}/resources/namespace.yml"
       content: "{{ pruned_namespace | to_yaml }}"
 
   - name: Get pvcs in namespace
@@ -182,6 +193,7 @@
     with_items: "{{ deployments.resources }}"
     loop_control:
       label: "{{ item.metadata.name }}"
+    when: quiesce_apps
 
   - name: Create rsync pods
     k8s:
@@ -230,3 +242,18 @@
     with_items: "{{ unbound_pvcs }}"
     loop_control:
       label: "{{ item.metadata.name }}"
+
+  - name: Unscale deployments in namespace
+    community.kubernetes.k8s_scale:
+      api_version: v1
+      kind: Deployment
+      namespace: "{{ namespace }}"
+      name: "{{ item.metadata.name }}"
+      replicas: "{{ item.spec.replicas }}"
+      wait_timeout: 120
+    with_items: "{{ deployments.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+    when:
+    - quiesce_apps
+    - unquiesce_apps

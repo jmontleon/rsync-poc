@@ -1,6 +1,7 @@
 - hosts: localhost
   gather_facts: false
   vars:
+    restore_resources: True
     rsync_deployment:
       apiVersion: apps/v1
       kind: Deployment
@@ -37,7 +38,7 @@
   tasks:
   - name: Set namespace path
     set_fact:
-      namespace_path: "{{ playbook_dir }}/{{ namespace }}/resources/nammespace.yml"
+      namespace_path: "{{ playbook_dir }}/{{ namespace }}/resources/namespace.yml"
 
   - name: Create namespace
     k8s:
@@ -97,3 +98,19 @@
     with_items: "{{ pvcs.resources }}"
     loop_control:
       label: "{{ item.metadata.name }}"
+
+  - when: restore_resources
+    block:
+    - name: Find resource definitions
+      find:
+        paths: "{{ playbook_dir }}/{{ namespace }}/resources/"
+        patterns: '*'
+        excludes: "PersistentVolumeClaims,namespace"
+      register: resource_find
+
+  - name: Create Resources
+    k8s:
+      definition: "{{ lookup('file', item.path) }}"
+    with_items: "{{ resource_find.files }}"
+    loop_control:
+      label: "{{ item.path }}"

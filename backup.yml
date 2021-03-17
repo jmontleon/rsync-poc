@@ -1,7 +1,9 @@
 - hosts: localhost
   gather_facts: false
   vars:
-    backup_resources: true
+    src_kubeconfig: /home/jason/Documents/openshift-install-4-src/auth/kubeconfig
+    dst_kubeconfig: /home/jason/Documents/openshift-install-4-dst/auth/kubeconfig
+    backup_resources: false
     excluded_resources:
     - Alertmanager
     - Binding
@@ -140,10 +142,14 @@
 
   - name: Retrieve namespace
     k8s_info:
+      #kubeconfig: "{{ src_kubeconfig }}"
       api_version: v1
       kind: Project
       name: "{{ namespace }}"
     register: namespace_info
+
+  - debug:
+      msg: "{{ namespace_info }}"
 
   - name: cleanup namespace
     set_fact:
@@ -164,6 +170,7 @@
 
   - name: Get pvcs in namespace
     k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
       api_version: v1
       kind: persistentvolumeclaims
       namespace: "{{ namespace }}"
@@ -196,6 +203,7 @@
 
   - name: Get deployments in namespace
     k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
       api_version: apps/v1
       kind: deployments
       namespace: "{{ namespace }}"
@@ -203,6 +211,7 @@
 
   - name: Scale down deployments in namespace
     community.kubernetes.k8s_scale:
+      kubeconfig: "{{ src_kubeconfig }}"
       api_version: v1
       kind: Deployment
       namespace: "{{ namespace }}"
@@ -215,6 +224,7 @@
 
   - name: Create rsync pods
     k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
       state: present
       definition: "{{ rsync_deployment }}"
     with_items: "{{ pvcs.resources }}"
@@ -236,6 +246,7 @@
 
   - name: Get rsync pods
     k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
       api_version: v1
       kind: Pod
       namespace: "{{ namespace }}"
@@ -244,7 +255,7 @@
     register: pods
 
   - name: rsync content from cluster
-    shell: oc rsync -n {{ namespace }} {{ item.metadata.name }}:/mnt/ {{ playbook_dir }}/{{ namespace }}/data/{{ item.metadata.labels.claim }}/
+    shell: oc --kubeconfig {{ src_kubeconfig }} rsync -n {{ namespace }} {{ item.metadata.name }}:/mnt/ {{ playbook_dir }}/{{ namespace }}/data/{{ item.metadata.labels.claim }}/
     with_items: "{{ pods.resources }}"
     register: command_result
     retries: 10
@@ -255,6 +266,7 @@
 
   - name: Delete rsync deployments
     k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
       state: absent
       definition: "{{ rsync_deployment }}"
     with_items: "{{ unbound_pvcs }}"
@@ -263,6 +275,7 @@
 
   - name: Unscale deployments in namespace
     community.kubernetes.k8s_scale:
+      kubeconfig: "{{ src_kubeconfig }}"
       api_version: v1
       kind: Deployment
       namespace: "{{ namespace }}"

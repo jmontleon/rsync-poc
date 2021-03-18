@@ -1,0 +1,7 @@
+src_kubeconfig:
+dst_kubeconfig:
+backup_resources: true
+transform_resources: true
+restore_resources: true
+quiesce_apps: true
+unquiesce_apps: true

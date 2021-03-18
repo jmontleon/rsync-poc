@@ -1,0 +1,713 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files:
+  - config.yml
+  vars:
+    excluded_resources:
+    - Alertmanager
+    - Binding
+    - Bundle
+    - BundleBinding
+    - BundleInstance
+    - EgressNetworkPolicy
+    - EndpointSlice
+    - Event
+    - ImageStreamImport
+    - ImageStreamMapping
+    - InstallPlan
+    - LimitRange
+    - LocalResourceAccessReview
+    - LocalSubjectAccessReview
+    - PackageManifest
+    - PersistentVolumeClaim
+    - Pod
+    - PodMetrics
+    - PodSecurityPolicyReview
+    - PodSecurityPolicySelfSubjectReview
+    - PodSecurityPolicySubjectReview
+    - PodTemplate
+    - Prometheus
+    - PrometheusRule
+    - ReplicaSet
+    - ReplicationControllerDummy
+    - SelfSubjectRulesReview
+    - ServiceMonitor
+    - SubjectRulesReview
+    dst_stunnel:
+      kind: ConfigMap
+      metadata:
+        name: stunnel-conf-{{ item.metadata.name }}
+        namespace: "{{ namespace }}"
+        labels:
+          service: rsync
+          purpose: stunnel
+      data:
+        stunnel.conf: |
+          foreground = yes
+          pid =
+          sslVersion = TLSv1.2
+          client = yes
+          syslog = no
+          [rsync]
+          accept = 1443
+          cert = /etc/stunnel/certs/tls.crt
+          connect = {{ routes.resources | selectattr('metadata.name', 'equalto', item.metadata.name) | map(attribute='spec.host') | list | first }}:443
+          key = /etc/stunnel/certs/tls.key
+    src_stunnel:
+      kind: ConfigMap
+      metadata:
+        name: stunnel-conf
+        namespace: "{{ namespace }}"
+        labels:
+          service: rsync
+          purpose: stunnel-config
+      data:
+        stunnel.conf: |
+          foreground = yes
+          pid =
+          socket = l:TCP_NODELAY=1
+          socket = r:TCP_NODELAY=1
+          debug = 7
+          sslVersion = TLSv1.2
+          [rsync]
+          accept = 1443
+          connect = 1873
+          key = /etc/stunnel/certs/tls.key
+          cert = /etc/stunnel/certs/tls.crt
+          TIMEOUTclose = 0
+    rsync_conf:
+      kind: ConfigMap
+      metadata:
+        name: rsync-conf
+        namespace: "{{ namespace }}"
+        labels:
+          service: rsync
+          purpose: rsync
+      data:
+        name: rsync-conf
+        namespace: "{{ namespace }}"
+        rsyncd.conf: |
+          syslog facility = local7
+          read only = no
+          list = yes
+          log file = /dev/stdout
+          max verbosity = 4
+          hosts allow = ::1, 127.0.0.1, localhost
+          [mnt]
+              comment = mnt
+              path = /mnt
+              use chroot = no
+              munge symlinks = no
+              list = yes
+              hosts allow = ::1, 127.0.0.1, localhost
+              read only = false
+    stunnel_crts:
+      kind: Secret
+      metadata:
+        name: stunnel-crts
+        namespace: "{{ namespace }}"
+        labels:
+          service: rsync
+          purpose: stunnel
+      type: Opaque
+      data:
+        tls.crt: "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURoekNDQW0rZ0F3SUJBZ0lVQmRUa0VZMDVkRTVuSkJQc3ZsVFlSUjR4cFZZd0RRWUpLb1pJaHZjTkFRRUwKQlFBd1V6RUxNQWtHQTFVRUJoTUNWVk14Q3pBSkJnTlZCQWdNQWs1RE1Rd3dDZ1lEVlFRSERBTlNSRlV4RWpBUQpCZ05WQkFvTUNXMXBaM0poZEdsdmJqRVZNQk1HQTFVRUF3d01iM0JsYm5Ob2FXWjBMbWx2TUI0WERUSXdNRFl6Ck1ERXpOREl4TjFvWERUSXhNRFl6TURFek5ESXhOMW93VXpFTE1Ba0dBMVVFQmhNQ1ZWTXhDekFKQmdOVkJBZ00KQWs1RE1Rd3dDZ1lEVlFRSERBTlNSRlV4RWpBUUJnTlZCQW9NQ1cxcFozSmhkR2x2YmpFVk1CTUdBMVVFQXd3TQpiM0JsYm5Ob2FXWjBMbWx2TUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUFzeUhFCnpjMVFTdGtuZFFwdnVzTFcxenhyb1NyY094eUkza2p4cjF0alJBZG1Mdm9EdEdDV1dYTnhNcXZZNU5IRUJuSjkKbzE2cmFWcDlyekRad2Q3NGFNaERRL2cxcWZydUR3Rk9UMlBoR3J4bnZ6Rmx6TDZqMXQrcDRSTnJTOWUyblA3Ygp2STNkbWY3MDFXUldqd0JOSnVkQTZjdk8rZVhrNTFJREhTcEJYYVRpeWlLdG5CVUpmaFlWS2JIeU54K3hyZlJYCjlPWFIxVS9ydXdRNTAvNVpGNHFUOW5VZC9vSDlFSmhTVGZvdzgvNmJIQ05Jd2NuYUFBOHpOc0RoS05MdVB1M08KQURqbmJoNU1BWXhKaDlXRlI5bEZlL1BmUU0zMXBDSENZemR1TFA0Ym91V0VTYW1mQjU5RWJaRzF5MDJtSzZvNAo5eWN1NmcxbFQwOUJBdUFKTHdJREFRQUJvMU13VVRBZEJnTlZIUTRFRmdRVUIrRFA2bXJWeERQYjFSQ2hWcy9JClJIdUZmeVF3SHdZRFZSMGpCQmd3Rm9BVUIrRFA2bXJWeERQYjFSQ2hWcy9JUkh1RmZ5UXdEd1lEVlIwVEFRSC8KQkFVd0F3RUIvekFOQmdrcWhraUc5dzBCQVFzRkFBT0NBUUVBckUweEVIL1E4VDlFUTc3VmJaWjJ5TjN1a3BPeQpMSzRTTVBNcE5BcCtJVTdDTlpSS3RkcGpqWkgwUDA2V1R3V0JRNlBlT2lkRzZlYllxYlVVSGpMZUlUK1hGWEVHCkRQVmdiNDJ0Nld6a0xqM3FyamRxTGxabWcvM2hhSUEyVzhYakZHdzA4Y1dBc0FVa0IzcE1FWDNZQllkQnNYWjkKQWl3a2hEN1o1LzRPUWZ0bGtQZGo3MXR2QjNRdUJ3UWU3OGNjNllaM3krV0lJa1NtaUdCVU1rbzIwUlI3ZTE5NQpGakhWY2N6WjNjVDZXMlU3UkxZSklUcU4yZWZrUm1aZDlab0dzSFVOZGhsRXQzZHpKNEhsb2RhTFlpRVVWWU5oCkFhM1lBRVdqc0QvOWJMY3FQUlFEQmRLcjV3TG5RRHo3QUFpS2M1SEpidVJ2QU80bnBKTjNTZDczeFE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg=="
+        tls.key: "LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQ3pJY1ROelZCSzJTZDEKQ20rNnd0YlhQR3VoS3R3N0hJamVTUEd2VzJORUIyWXUrZ08wWUpaWmMzRXlxOWprMGNRR2NuMmpYcXRwV24ydgpNTm5CM3Zob3lFTkQrRFdwK3U0UEFVNVBZK0VhdkdlL01XWE12cVBXMzZuaEUydEwxN2FjL3R1OGpkMlovdlRWClpGYVBBRTBtNTBEcHk4NzU1ZVRuVWdNZEtrRmRwT0xLSXEyY0ZRbCtGaFVwc2ZJM0g3R3Q5RmYwNWRIVlQrdTcKQkRuVC9sa1hpcFAyZFIzK2dmMFFtRkpOK2pEei9wc2NJMGpCeWRvQUR6TTJ3T0VvMHU0KzdjNEFPT2R1SGt3QgpqRW1IMVlWSDJVVjc4OTlBemZXa0ljSmpOMjRzL2h1aTVZUkpxWjhIbjBSdGtiWExUYVlycWpqM0p5N3FEV1ZQClQwRUM0QWt2QWdNQkFBRUNnZ0VBUW50ZThrNm41UStSSUZRZVFYODhneWR1ZnFOTWx6ZXc2R2JFSkNQVHhKVEcKYk5ybmN4T0IyWE1KNlJkMGFRQWRNNU5jWTd5biszTFZRS2J0dXBGSk9vSlF6TEliSUpuN3JsLzZzMlpMVGtQcwpjVDRoSFFzSC9hQ0hDUHpQRHBmaHM0UzNBdFRZRU9aWjhiVEtsMG95V0NUdHA1ZTNtbkdqTWVMek91aksxN2pTCkp3aFBJTjREbGJzVS9DMmYxMG4wTU1CZDZJNEUxWFFLWlVQcXZFcjJveEM1MzhZVndMNEJZTm5TS2R1UjV4aW4KbVB0eFRpMXpwVFZWZk5XakcraTBsRFRMeUZ3WUJBN1I3VGdyQ0lXaE9UcDAyaVhJY1FqcjNNMlk5TDAxOHd1OAo4eXVCTTdLMVk5QVZtREljS3FYMEZHT2lGRVhJaGZobGNMZ3ZBend0SVFLQmdRRGkwKzBkY0RkZjNQSVpSQmlKClhObEJ3YWkzY1ZHUmdJNVV0bkZJK2FNUEhaZWpwVWE0L0xyVFlNdUZEMzhpamRjUzBvWEE4TkIzcmh4akkyekoKUUxLa0FpeVhaNjlQdjFSVXQrTHZKYW4vUjNWMlFqcUU5RnQ4YUQ1TUZaN0pLNUZEbmx6ZTJGUnVjNE40L0dMNApyRTVhRGNEYUQ0NHpmUFRYUGpsUlVxMHUvd0tCZ1FES0s0RElwWkN0aVhQRzhWbHEwbHpNUGJZSjNCV3h3OGFCCnRrWnNoNzBHWjh0MXhPSVgyWkIrb0FnTUFoU1dVcGZUdHJJNjcxOTZoVXplT0NkNmVuSm1xcFJRUzlwK2p0WXkKT2pob0RGZVFFMUUxL3ZUSUEya0Y3MjRSa0l0TlZ3bjR5eWc1QUZaTjhzbGhLRlRkK09LSkN1VmJFeGFoeHRLUgozWFF6Zng1VjBRS0JnRVlEamt3bzZCN0I3MFNYUFUraEJqcUMwVllXTjB4SE55ZTB6TkR1cFVNMEtpdE1COEZ2CjJTY0gyS293dDFodUdiWG9uM3FIbW9GbWo4S1dHNjBmT0VUaG11djlDQ01BZHNKVHBFdVcvNXNaYm90Yk0vNzQKQWdrcmtCY2lFVW9kRlpDZW9DSDArbExCZXhKc0xReCsrd3hXOUhFYW5oVU1lL0s0ZFM3QjYwejNBb0dBVDhuMQpqTHJUSzdvb3lHWnVYTnRqSm5SZ2lPbWtZa0VhOGd5SEpNUTVsUEtYK1FYWUdZT1RKSFp5VnBMbm55QS9yWjNZCkg2eGphVTU4dE9OQ3FYTHovWkxxNy9uUDVNem91bkFCM1FhcDlFRzdkbTBHSEg1RUQ4U2NFekNSMmRjMUoweSsKdGloczUxeWZuOG0wSE5yaVJTWFl1U1lDYzV5dGRFWUxXMXViRkZFQ2dZRUExWEZMOUFKcjgvSThrVW5ZSlVUbQpkK09taTU3NVJOUnpZL29sUmFSMldSaG83NXVsNGZGNnhDR1E4VkZqNWtmMmxZM05IR2pSR21pTzgzbnJzcEZ3ClVCa2ZWc0lEVlFyQ2I3UERkNTVzenR6M2tTRE9rNzM2aHF0K2F2TmpoOGFGVm5hbWo2WU5SeHhyMFI2MTlxWGMKQnl1dUk5aUw2bHZpemQxdzRMek5wcGc9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K"
+    src_rsync_deployment:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        labels:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ namespace }}"
+      spec:
+        selector:
+          matchLabels:
+            service: rsync
+        template:
+          metadata:
+            labels:
+              claim: "{{ item.metadata.name }}"
+              service: rsync
+          spec:
+            containers:
+            - name: rsync
+              imagePullPolicy: Always
+              command:
+              - /usr/bin/rsync
+              - --daemon
+              - --no-detach
+              - --port=1873
+              - -vvv
+              image: "quay.io/konveyor/rsync-transfer:latest"
+              volumeMounts:
+              - mountPath: /mnt
+                name: mnt
+              - name:      rsync-conf
+                mountPath: /etc/rsyncd.conf
+                subPath:   rsyncd.conf
+            - name: stunnel
+              imagePullPolicy: Always
+              image: "quay.io/konveyor/rsync-transfer:latest"
+              command:
+               - /bin/stunnel
+               - /etc/stunnel/stunnel.conf
+              volumeMounts:
+              - name:      stunnel-conf
+                mountPath: /etc/stunnel/stunnel.conf
+                subPath:   stunnel.conf
+              - name:      stunnel-crts
+                mountPath: /etc/stunnel/certs
+            volumes:
+            - name: mnt
+              persistentVolumeClaim:
+                claimName: "{{ item.metadata.name }}"
+            - name: rsync-conf
+              configMap:
+                name: rsync-conf
+            - name: stunnel-conf
+              configMap:
+                name: stunnel-conf
+            - name: stunnel-crts
+              secret:
+                secretName: stunnel-crts
+                items:
+                - key: tls.crt
+                  path: tls.crt
+                - key: tls.key
+                  path: tls.key
+    dst_rsync_pod:
+      kind: Pod
+      metadata:
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ namespace }}"
+        labels:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+      spec:
+        restartPolicy: OnFailure
+        containers:
+        - name: rsync
+          imagePullPolicy: Always
+          command:
+          - /usr/bin/rsync
+          - -vvvv
+          - --delete
+          - --recursive
+          - --compress
+          - rsync://localhost:1443/mnt
+          - /mnt/
+          - -vvv
+          image: "quay.io/konveyor/rsync-transfer:latest"
+          volumeMounts:
+          - mountPath: /mnt
+            name: mnt
+        - name: stunnel
+          imagePullPolicy: Always
+          image: "quay.io/konveyor/rsync-transfer:latest"
+          command:
+           - /bin/stunnel
+           - /etc/stunnel/stunnel.conf
+          volumeMounts:
+          - name:      stunnel-conf
+            mountPath: /etc/stunnel/stunnel.conf
+            subPath:   stunnel.conf
+          - name:      stunnel-crts
+            mountPath: /etc/stunnel/certs
+        volumes:
+        - name: mnt
+          persistentVolumeClaim:
+            claimName: "{{ item.metadata.name }}"
+        - name: stunnel-conf
+          configMap:
+            name: stunnel-conf-{{ item.metadata.name }}
+        - name: stunnel-crts
+          secret:
+            secretName: stunnel-crts
+            items:
+            - key: tls.crt
+              path: tls.crt
+            - key: tls.key
+              path: tls.key
+    rsync_service:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        labels:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ namespace }}"
+      spec:
+        ports:
+        - name: stunnel
+          port: 1443
+          protocol: TCP
+          targetPort: 1443
+        selector:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+    rsync_route:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ namespace }}"
+        labels:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+        annotations:
+          haproxy.router.openshift.io/timeout: "86400"
+      spec:
+        to:
+          kind: Service
+          name: "{{ item.metadata.name }}"
+        port:
+          targetPort: 1443
+        tls:
+          termination: passthrough
+    dst_rsync_deployment:
+  tasks:
+  - name: Create namespace directory
+    file:
+      state: directory
+      path: "{{ playbook_dir }}/{{ namespace }}"
+
+  - name: Create resources directory
+    file:
+      state: directory
+      path: "{{ playbook_dir }}/{{ namespace }}/resources"
+
+  - when: backup_resources
+    block:
+    - name: Get APIs
+      community.kubernetes.k8s_cluster_info:
+      register: apis
+
+    - name: Get resources
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: "{{ item.value.api_version }}"
+        kind: "{{ item.value.kind }}"
+        namespace: "{{ namespace }}"
+      register: resources
+      loop: "{{ apis.apis | dict2items }}"
+      loop_control:
+        label: "{{ item.value.kind }}.{{ item.value.api_version }}"
+      when:
+      - item.value.namespaced
+      - item.value.kind not in excluded_resources
+
+    - name: Initialize resource lists
+      set_fact:
+        pruned_resources: []
+        unpruned_resources: []
+
+    - name: Collect unmodified resources
+      set_fact:
+        unpruned_resources: "{{ unpruned_resources + item.resources }}"
+      with_flattened: "{{ resources.results }}"
+      when:
+      - item.resources is defined
+      loop_control:
+        label: "{{ item.item.key }}"
+
+    - name: Clean resources
+      set_fact:
+        pruned_resources: "{{ pruned_resources + new_item }}"
+      with_items: "{{ unpruned_resources }}"
+      vars:
+        cleanup:
+          metadata: "{{ item.metadata|combine({'resourceVersion': omit, 'uid': omit}) }}"
+        new_item:
+        - "{{ item|combine(cleanup) }}"
+      loop_control:
+        label: "{{ item.metadata.name }} {{ item.kind }} {{ item.apiVersion }}"
+
+    - name: Write resources out
+      copy:
+        dest: "{{ playbook_dir }}/{{ namespace }}/resources/{{ item.kind}}-{{ item.metadata.name }}.yml"
+        content: "{{ item | to_yaml }}"
+      with_items: "{{ pruned_resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+      when:
+      - not(item.kind == 'RoleBinding' and item.metadata.name == 'system:deployers')
+      - not(item.kind == 'RoleBinding' and item.metadata.name == 'system:image-builders')
+      - not(item.kind == 'RoleBinding' and item.metadata.name == 'system:image-pullers')
+      - not(item.kind == 'ServiceAccount' and item.metadata.name == 'builder')
+      - not(item.kind == 'ServiceAccount' and item.metadata.name == 'default')
+      - not(item.kind == 'ServiceAccount' and item.metadata.name == 'deployer')
+
+  - name: Retrieve namespace
+    k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: project.openshift.io/v1
+      kind: Project
+      name: "{{ namespace }}"
+    register: namespace_info
+
+  - name: Retrieve namespace
+    k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: v1
+      kind: Project
+      name: "{{ namespace }}"
+    register: namespace_3_info
+    when: namespace_info.resources | length == 0
+
+  - fail:
+      msg: Namespace '{{ namespace }}' not found
+    when:
+    - namespace_info.resources | length == 0
+    - namespace_3_info.resources | length == 0
+
+  - name: cleanup namespace
+    set_fact:
+      pruned_namespace: "{{ new_item }}"
+    vars:
+      cleanup:
+        metadata: "{{ item.metadata|combine({'resourceVersion': omit, 'uid': omit}) }}"
+      new_item: "{{ item|combine(cleanup) }}"
+    with_items:
+    - "{{ namespace_info.resources[0] }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+    when: namespace_info.resources | length > 0
+
+  - name: cleanup namespace
+    set_fact:
+      pruned_namespace: "{{ new_item }}"
+    vars:
+      cleanup:
+        metadata: "{{ item.metadata|combine({'resourceVersion': omit, 'uid': omit}) }}"
+      new_item: "{{ item|combine(cleanup) }}"
+    with_items:
+    - "{{ namespace_3_info.resources[0] }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+    when:
+    - namespace_3_info.resources is defined
+    - namespace_3_info.resources | length > 0
+
+  - name: Write namespace out
+    copy:
+      dest: "{{ playbook_dir }}/{{ namespace }}/resources/namespace.yml"
+      content: "{{ pruned_namespace | to_yaml }}"
+
+  - name: Get pvcs in namespace
+    k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: v1
+      kind: persistentvolumeclaims
+      namespace: "{{ namespace }}"
+    register: pvcs
+
+  - name: Intialize unbound PVCs
+    set_fact:
+      unbound_pvcs: []
+
+  - name: Clean up PVC definitions
+    set_fact:
+      unbound_pvcs: "{{ unbound_pvcs + new_item }}"
+    vars:
+      cleanup:
+        metadata: "{{ item.metadata|combine({'annotations': omit,'resourceVersion': omit, 'uid': omit}) }}"
+        spec: "{{ item.spec|combine({'volumeName': omit}) }}"
+      new_item:
+      - "{{ item|combine(cleanup) }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Write pvcs out
+    copy:
+      dest: "{{ playbook_dir }}/{{ namespace }}/resources/{{ item.kind}}-{{ item.metadata.name }}.yml"
+      content: "{{ item | to_yaml }}"
+    with_items: "{{ unbound_pvcs }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Get deployments in namespace
+    k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: apps/v1
+      kind: deployments
+      namespace: "{{ namespace }}"
+    register: deployments
+
+  - name: Scale down deployments in namespace
+    community.kubernetes.k8s_scale:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: v1
+      kind: Deployment
+      namespace: "{{ namespace }}"
+      name: "{{ item.metadata.name }}"
+      replicas: 0
+    with_items: "{{ deployments.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+    when: quiesce_apps
+
+  - name: Create stunnel configmap
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ src_stunnel }}"
+
+  - name: Create stunnel secret
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ stunnel_crts }}"
+
+  - name: Create rsync configmap
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ rsync_conf }}"
+
+  - name: Create rsync deployments
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ src_rsync_deployment }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Create rsync services
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ rsync_service }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Create rsync routes
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ rsync_route }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Set namespace path
+    set_fact:
+      namespace_path: "{{ playbook_dir }}/{{ namespace }}/resources/namespace.yml"
+
+  - name: Update project API if necessary
+    replace:
+      path: "{{ namespace_path }}"
+      regexp: '^apiVersion: v1'
+      replace: 'apiVersion: project.openshift.io/v1'
+
+  - name: Create namespace
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      definition: "{{ lookup('file', namespace_path) }}"
+
+  - name: Find PVC definitions
+    find:
+      paths: "{{ playbook_dir }}/{{ namespace }}/resources/"
+      patterns: 'PersistentVolumeClaim-*'
+    register: find
+
+  - name: Create PVCs
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      definition: "{{ lookup('file', item.path) }}"
+    with_items: "{{ find.files }}"
+    loop_control:
+      label: "{{ item.path }}"
+
+  - name: Get pvcs in namespace
+    k8s_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      api_version: v1
+      kind: persistentvolumeclaims
+      namespace: "{{ namespace }}"
+    register: pvcs
+
+  - name: Get source rsync routes
+    k8s_info:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: route.openshift.io/v1
+      kind: Route
+      namespace: "{{ namespace }}"
+      label_selectors:
+      - service = rsync
+    register: routes
+
+  - name: Create stunnel configmaps
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: present
+      definition: "{{ dst_stunnel }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Create stunnel secret
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: present
+      definition: "{{ stunnel_crts }}"
+
+  - name: Create rsync pods
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: present
+      definition: "{{ dst_rsync_pod }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Get rsync pods
+    k8s_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      api_version: v1
+      kind: Pod
+      namespace: "{{ namespace }}"
+      label_selectors:
+      - service = rsync
+    register: pods
+
+  - name: Wait for rsync pods to complete
+    k8s_info:
+      api_version: v1
+      kind: Pod
+      name: "{{ item.metadata.name }}"
+      namespace: "{{ namespace }}"
+    register: pod
+    with_items: "{{ pods.resources }}"
+    retries: 100
+    delay: 10
+    until:
+    - (pod.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'rsync') | map(attribute='state') | list | first).terminated is defined
+    - "'Completed' == (pod.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'rsync') | map(attribute='state.terminated.reason') | list | first)"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete rsync deployments
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ src_rsync_deployment }}"
+    with_items: "{{ unbound_pvcs }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete stunnel configmap
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ src_stunnel }}"
+
+  - name: Delete stunnel secret
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ stunnel_crts }}"
+
+  - name: Delete rsync configmap
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ rsync_conf }}"
+
+  - name: Delete rsync services
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ rsync_service }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete rsync routes
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ rsync_route }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete rsync pods
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: absent
+      definition: "{{ dst_rsync_pod }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete stunnel configmaps
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: absent
+      definition: "{{ dst_stunnel }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete stunnel secret
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: absent
+      definition: "{{ stunnel_crts }}"
+
+  - name: Unscale deployments in namespace
+    community.kubernetes.k8s_scale:
+      kubeconfig: "{{ src_kubeconfig }}"
+      api_version: v1
+      kind: Deployment
+      namespace: "{{ namespace }}"
+      name: "{{ item.metadata.name }}"
+      replicas: "{{ item.spec.replicas }}"
+      wait_timeout: 120
+    with_items: "{{ deployments.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+    when:
+    - quiesce_apps
+    - unquiesce_apps
+
+  - when:
+    - backup_resources
+    - transform_resources
+    block:
+    - name: Find transforms
+      find:
+        paths: "{{ playbook_dir }}/transform.d/"
+        patterns: '*'
+      register: transform_d
+
+    - name: Run Transforms
+      include_tasks: "{{ item.path }}"
+      with_items: "{{ transform_d.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+  - when:
+    - backup_resources
+    - restore_resources
+    block:
+    - name: Find resource definitions
+      find:
+        paths: "{{ playbook_dir }}/{{ namespace }}/resources/"
+        excludes: 'PersistentVolumeClaim-*,namespace.yml'
+      register: resource_find
+
+    - name: Create Resources
+      k8s:
+        kubeconfig: "{{ dst_kubeconfig }}"
+        definition: "{{ lookup('file', item.path) }}"
+      with_items: "{{ resource_find.files }}"
+      loop_control:
+        label: "{{ item.path }}"

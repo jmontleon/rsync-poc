@@ -6,20 +6,10 @@ ansible-galaxy collection install community.kubernetes
 ```
 
 # Usage
-The source playbook will quiesce the application in order to ensure data integrity. At the moment this means scaling down deployments, but should be expanded to scale down other scalable resources (deploymentconfigs, ...), delete standalone pods, etc.
-
-Source cluster:
-- `ansible-playbook backup.yml -e namespace=robot-shop`
-
-Transform:
-- Add task files to transform resources as desired in the `transform.d` directory
-- `ansible-playbook transform.yml -e namespace=robot-shop`
-
-Destination cluster:
-- `ansible-playbook restore.yml -e namespace=robot-shop`
-
-# Demo
-[![demo](https://asciinema.org/a/t9Lb2sTb4vggl6W6wjU74BGAv.svg)](https://asciinema.org/a/t9Lb2sTb4vggl6W6wjU74BGAv?autoplay=1&speed=5)
+1. Update `src_kubeconfig` and `dst_kubeconfig` in `config.yml` with the paths to the kube config for each cluster
+1. Edit other options as desired in `config.yml`
+1. Add transform tasks to transforms.d as desired. A couple simple examples are included.
+1. Run `ansible-playbook migrate.yml -e namespace=robot-shop`
 
 # Issues
 - Not all APIs are found as expected: https://github.com/ansible-collections/community.kubernetes/issues/380

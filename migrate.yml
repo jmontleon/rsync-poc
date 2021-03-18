@@ -101,6 +101,19 @@
               list = yes
               hosts allow = ::1, 127.0.0.1, localhost
               read only = false
+              auth users = {{ rsync_user }}
+              secrets file = /etc/rsyncd/rsyncd.secret
+    rsync_secret:
+      kind: Secret
+      metadata:
+        name: rsync-secret
+        namespace: "{{ namespace }}"
+        labels:
+          service: rsync
+          purpose: stunnel
+      type: Opaque
+      data:
+        rsyncd.secret: "{{ (rsync_user + ':' + rsync_pass) | b64encode }}"
     stunnel_crts:
       kind: Secret
       metadata:
@@ -148,6 +161,8 @@
               - name:      rsync-conf
                 mountPath: /etc/rsyncd.conf
                 subPath:   rsyncd.conf
+              - name:      rsync-secret
+                mountPath: /etc/rsyncd
             - name: stunnel
               imagePullPolicy: Always
               image: "quay.io/konveyor/rsync-transfer:latest"
@@ -167,6 +182,13 @@
             - name: rsync-conf
               configMap:
                 name: rsync-conf
+            - name: rsync-secret
+              secret:
+                secretName: rsync-secret
+                items:
+                - key: rsyncd.secret
+                  path: rsyncd.secret
+                  mode: 0600
             - name: stunnel-conf
               configMap:
                 name: stunnel-conf
@@ -197,9 +219,12 @@
           - --delete
           - --recursive
           - --compress
-          - rsync://localhost:1443/mnt
+          - rsync://{{ rsync_user }}@localhost:1443/mnt
           - /mnt/
           - -vvv
+          env:
+          - name: RSYNC_PASSWORD
+            value: "{{ rsync_pass }}"
           image: "quay.io/konveyor/rsync-transfer:latest"
           volumeMounts:
           - mountPath: /mnt
@@ -302,6 +327,11 @@
     slurp:
       src: "{{ tmp_dir.path }}/tls.crt"
     register: tls_crt
+
+  - name: Generate an rsync username and password
+    set_fact:
+      rsync_user: "{{ lookup('password', tmp_dir.path + '/user chars=ascii_letters') }}"
+      rsync_pass: "{{ lookup('password', tmp_dir.path + '/pass chars=ascii_letters,digits') }}"
 
   - name: Create namespace directory
     file:
@@ -502,6 +532,12 @@
       state: present
       definition: "{{ rsync_conf }}"
 
+  - name: Create rsync secret
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: present
+      definition: "{{ rsync_secret }}"
+
   - name: Create rsync deployments
     k8s:
       kubeconfig: "{{ src_kubeconfig }}"
@@ -652,6 +688,12 @@
       kubeconfig: "{{ src_kubeconfig }}"
       state: absent
       definition: "{{ rsync_conf }}"
+
+  - name: Delete rsync secret
+    k8s:
+      kubeconfig: "{{ src_kubeconfig }}"
+      state: absent
+      definition: "{{ rsync_secret }}"
 
   - name: Delete rsync services
     k8s:

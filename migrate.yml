@@ -493,26 +493,108 @@
     loop_control:
       label: "{{ item.metadata.name }}"
 
-  - name: Get deployments in namespace
-    k8s_info:
-      kubeconfig: "{{ src_kubeconfig }}"
-      api_version: apps/v1
-      kind: deployments
-      namespace: "{{ namespace }}"
-    register: deployments
+  - when:
+    - quiesce_apps
+    block:
+    - name: Get deployments in namespace
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps/v1
+        kind: deployments
+        namespace: "{{ namespace }}"
+      register: deployments
 
-  - name: Scale down deployments in namespace
-    community.kubernetes.k8s_scale:
-      kubeconfig: "{{ src_kubeconfig }}"
-      api_version: v1
-      kind: Deployment
-      namespace: "{{ namespace }}"
-      name: "{{ item.metadata.name }}"
-      replicas: 0
-    with_items: "{{ deployments.resources }}"
-    loop_control:
-      label: "{{ item.metadata.name }}"
-    when: quiesce_apps
+    - name: Scale down deployments in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: 0
+      with_items: "{{ deployments.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Get deploymentConfigs in namespace
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps.openshift.io/v1
+        kind: deploymentConfigs
+        namespace: "{{ namespace }}"
+      register: deployment_configs
+
+    - name: Scale down deploymentConfigs in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps.openshift.iov1
+        kind: DeploymentConfig
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: 0
+      with_items: "{{ deployment_configs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Get replcation controllers in namespace
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: replicationcontrollers
+        namespace: "{{ namespace }}"
+      register: replication_controllers
+
+    - name: Scale down replcation controllers in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: ReplicationController
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: 0
+      with_items: "{{ replication_controllers.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Get jobs in namespace
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: batch/v1
+        kind: jobss
+        namespace: "{{ namespace }}"
+      register: jobs
+
+    - name: Scale down deployments in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: batch/v1
+        kind: Job
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: 0
+      with_items: "{{ jobs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Get statefulsets in namespace
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps/v1
+        kind: statefulsets
+        namespace: "{{ namespace }}"
+      register: statefulsets
+
+    - name: Scale down deployments in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: 0
+      with_items: "{{ statefulsets.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
 
   - name: Create stunnel configmap
     k8s:
@@ -737,21 +819,74 @@
       state: absent
       definition: "{{ stunnel_crts }}"
 
-  - name: Unscale deployments in namespace
-    community.kubernetes.k8s_scale:
-      kubeconfig: "{{ src_kubeconfig }}"
-      api_version: v1
-      kind: Deployment
-      namespace: "{{ namespace }}"
-      name: "{{ item.metadata.name }}"
-      replicas: "{{ item.spec.replicas }}"
-      wait_timeout: 120
-    with_items: "{{ deployments.resources }}"
-    loop_control:
-      label: "{{ item.metadata.name }}"
-    when:
+  - when:
     - quiesce_apps
     - unquiesce_apps
+    block:
+    - name: Scale up deployments in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: "{{ item.spec.replicas }}"
+        wait: no
+      with_items: "{{ deployments.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Scale up deploymentConfigs in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps.openshift.io/v1
+        kind: DeploymentConfig
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: "{{ item.spec.replicas }}"
+        wait: no
+      with_items: "{{ deployment_configs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Scale up replcation controllers in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: ReplicationController
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: "{{ item.spec.replicas }}"
+        wait: no
+      with_items: "{{ replication_controllers.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Scale up deployments in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: batch/v1
+        kind: Job
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: "{{ item.spec.replicas }}"
+        wait: no
+      with_items: "{{ jobs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Scale up deployments in namespace
+      community.kubernetes.k8s_scale:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: apps/v1
+        kind: StatefulSet
+        namespace: "{{ namespace }}"
+        name: "{{ item.metadata.name }}"
+        replicas: "{{ item.spec.replicas }}"
+        wait: no
+      with_items: "{{ statefulsets.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
 
   - when:
     - backup_resources

@@ -3,5 +3,6 @@ dst_kubeconfig:
 backup_resources: true
 transform_resources: true
 restore_resources: true
+create_namespace: true
 quiesce_apps: true
 unquiesce_apps: true

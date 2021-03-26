@@ -661,6 +661,7 @@
     k8s:
       kubeconfig: "{{ dst_kubeconfig }}"
       definition: "{{ lookup('file', namespace_path) }}"
+    when: create_namespace
 
   - name: Find PVC definitions
     find:

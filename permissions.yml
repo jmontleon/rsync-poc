@@ -1,0 +1,102 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files:
+  - config.yml
+  vars:
+    permissions_pod:
+      kind: Pod
+      metadata:
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ namespace }}"
+        labels:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+      spec:
+        restartPolicy: OnFailure
+        containers:
+        - name: permissions
+          imagePullPolicy: Always
+          command:
+          - chown
+          - -R
+          - "{{ uid }}:{{ gid }}"
+          - /mnt
+          image: "quay.io/konveyor/rsync-transfer:latest"
+          volumeMounts:
+          - mountPath: /mnt
+            name: mnt
+        volumes:
+        - name: mnt
+          persistentVolumeClaim:
+            claimName: "{{ item.metadata.name }}"
+  tasks:
+  - name: Retrieve namespace
+    k8s_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      api_version: project.openshift.io/v1
+      kind: Project
+      name: "{{ namespace }}"
+    register: namespace_info
+
+  - fail:
+      msg: Namespace '{{ namespace }}' not found
+    when:
+    - namespace_info.resources | length == 0
+
+  - name: Set uid and gid
+    set_fact:
+      uid: "{{ namespace_info.resources[0].metadata.annotations['openshift.io/sa.scc.uid-range'].split('/') | first }}"
+      gid: "{{ namespace_info.resources[0].metadata.annotations['openshift.io/sa.scc.supplemental-groups'].split('/') | first }}"
+
+  - name: Get pvcs in namespace
+    k8s_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      api_version: v1
+      kind: persistentvolumeclaims
+      namespace: "{{ namespace }}"
+    register: pvcs
+
+  - name: Create permission pods
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: present
+      definition: "{{ permissions_pod }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Get permission pods
+    k8s_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      api_version: v1
+      kind: Pod
+      namespace: "{{ namespace }}"
+      label_selectors:
+      - service = rsync
+    register: pods
+
+  - name: Wait for rsync pods to complete
+    k8s_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      api_version: v1
+      kind: Pod
+      name: "{{ item.metadata.name }}"
+      namespace: "{{ namespace }}"
+    register: pod
+    with_items: "{{ pods.resources }}"
+    retries: 100
+    delay: 10
+    until:
+    - (pod.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'permissions') | map(attribute='state') | list | first).terminated is defined
+    - "'Completed' == (pod.resources[0].status.containerStatuses | selectattr('name', 'equalto', 'permissions') | map(attribute='state.terminated.reason') | list | first)"
+    loop_control:
+      label: "{{ item.metadata.name }}"
+
+  - name: Delete permissions pods
+    k8s:
+      kubeconfig: "{{ dst_kubeconfig }}"
+      state: absent
+      definition: "{{ permissions_pod }}"
+    with_items: "{{ pvcs.resources }}"
+    loop_control:
+      label: "{{ item.metadata.name }}"

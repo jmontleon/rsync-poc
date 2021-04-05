@@ -53,6 +53,26 @@
           cert = /etc/stunnel/certs/tls.crt
           connect = {{ routes.resources | selectattr('metadata.name', 'equalto', item.metadata.name) | map(attribute='spec.host') | list | first }}:443
           key = /etc/stunnel/certs/tls.key
+    dst_k8s_stunnel:
+      kind: ConfigMap
+      metadata:
+        name: stunnel-conf-{{ item.metadata.name }}
+        namespace: "{{ namespace }}"
+        labels:
+          service: rsync
+          purpose: stunnel
+      data:
+        stunnel.conf: |
+          foreground = yes
+          pid =
+          sslVersion = TLSv1.2
+          client = yes
+          syslog = no
+          [rsync]
+          accept = 1443
+          cert = /etc/stunnel/certs/tls.crt
+          connect = {{ routes.resources | selectattr('metadata.name', 'equalto', item.metadata.name) | map(attribute='status.loadBalancer.ingress') | list | first | map(attribute='hostname') | list | first }}:1443
+          key = /etc/stunnel/certs/tls.key
     src_stunnel:
       kind: ConfigMap
       metadata:
@@ -209,9 +229,13 @@
           claim: "{{ item.metadata.name }}"
           service: rsync
       spec:
+        securityContext:
+          runAsUser: 0 
         restartPolicy: OnFailure
         containers:
         - name: rsync
+          securityContext:
+            runAsUser: 0 
           imagePullPolicy: Always
           command:
           - /usr/bin/rsync
@@ -230,6 +254,8 @@
           - mountPath: /mnt
             name: mnt
         - name: stunnel
+          securityContext:
+            runAsUser: 0 
           imagePullPolicy: Always
           image: "quay.io/konveyor/rsync-transfer:latest"
           command:
@@ -293,6 +319,25 @@
           targetPort: 1443
         tls:
           termination: passthrough
+    rsync_k8s_service:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        labels:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ namespace }}"
+      spec:
+        type: LoadBalancer
+        ports:
+        - name: stunnel
+          port: 1443
+          protocol: TCP
+          targetPort: 1443
+        selector:
+          claim: "{{ item.metadata.name }}"
+          service: rsync
     dst_rsync_deployment:
   tasks:
   - name: Make temp directory
@@ -404,28 +449,43 @@
       - not(item.kind == 'ServiceAccount' and item.metadata.name == 'default')
       - not(item.kind == 'ServiceAccount' and item.metadata.name == 'deployer')
 
-  - name: Retrieve namespace
-    k8s_info:
-      kubeconfig: "{{ src_kubeconfig }}"
-      api_version: project.openshift.io/v1
-      kind: Project
-      name: "{{ namespace }}"
-    register: namespace_info
+  - when: "'project.openshift.io' in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Retrieve project
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: project.openshift.io/v1
+        kind: Project
+        name: "{{ namespace }}"
+      register: namespace_info
+  
+    - name: Retrieve project
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: Project
+        name: "{{ namespace }}"
+      register: namespace_3_info
+      when: namespace_info.resources | length == 0
+    - fail:
+        msg: Namespace '{{ namespace }}' not found
+      when:
+      - namespace_info.resources | length == 0
+      - namespace_3_info.resources | length == 0
 
-  - name: Retrieve namespace
-    k8s_info:
-      kubeconfig: "{{ src_kubeconfig }}"
-      api_version: v1
-      kind: Project
-      name: "{{ namespace }}"
-    register: namespace_3_info
-    when: namespace_info.resources | length == 0
-
-  - fail:
-      msg: Namespace '{{ namespace }}' not found
-    when:
-    - namespace_info.resources | length == 0
-    - namespace_3_info.resources | length == 0
+  - when: "'project.openshift.io' not in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Retrieve namespace
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: 'v1'
+        kind: Namespace
+        name: "{{ namespace }}"
+      register: namespace_info
+    - fail:
+        msg: Namespace '{{ namespace }}' not found
+      when:
+      - namespace_info.resources | length == 0
 
   - name: cleanup namespace
     set_fact:
@@ -629,23 +689,37 @@
     loop_control:
       label: "{{ item.metadata.name }}"
 
-  - name: Create rsync services
-    k8s:
-      kubeconfig: "{{ src_kubeconfig }}"
-      state: present
-      definition: "{{ rsync_service }}"
-    with_items: "{{ pvcs.resources }}"
-    loop_control:
-      label: "{{ item.metadata.name }}"
 
-  - name: Create rsync routes
-    k8s:
-      kubeconfig: "{{ src_kubeconfig }}"
-      state: present
-      definition: "{{ rsync_route }}"
-    with_items: "{{ pvcs.resources }}"
-    loop_control:
-      label: "{{ item.metadata.name }}"
+  - when: "'routes.openshift.io' in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Create openshift rsync services
+      k8s:
+        kubeconfig: "{{ src_kubeconfig }}"
+        state: present
+        definition: "{{ rsync_service }}"
+      with_items: "{{ pvcs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+
+    - name: Create rsync routes
+      k8s:
+        kubeconfig: "{{ src_kubeconfig }}"
+        state: present
+        definition: "{{ rsync_route }}"
+      with_items: "{{ pvcs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+  
+  - when: "'routes.openshift.io' not in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Create rsync ingress
+      k8s:
+        kubeconfig: "{{ src_kubeconfig }}"
+        state: present
+        definition: "{{ rsync_k8s_service }}"
+      with_items: "{{ pvcs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
 
   - name: Set namespace path
     set_fact:
@@ -685,24 +759,54 @@
       namespace: "{{ namespace }}"
     register: pvcs
 
-  - name: Get source rsync routes
-    k8s_info:
-      kubeconfig: "{{ src_kubeconfig }}"
-      api_version: route.openshift.io/v1
-      kind: Route
-      namespace: "{{ namespace }}"
-      label_selectors:
-      - service = rsync
-    register: routes
+  - when: "'routes.openshift.io' in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Get source rsync routes
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: route.openshift.io/v1
+        kind: Route
+        namespace: "{{ namespace }}"
+        label_selectors:
+        - service = rsync
+      register: routes
+ 
+  - when: "'routes.openshift.io' not in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Get source load balancer 
+      k8s_info:
+        kubeconfig: "{{ src_kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ namespace }}"
+        label_selectors:
+        - service = rsync
+      register: routes
 
-  - name: Create stunnel configmaps
-    k8s:
-      kubeconfig: "{{ dst_kubeconfig }}"
-      state: present
-      definition: "{{ dst_stunnel }}"
-    with_items: "{{ pvcs.resources }}"
-    loop_control:
-      label: "{{ item.metadata.name }}"
+  - debug:
+      msg: "{{ routes }}"
+
+  - when: "'routes.openshift.io' in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Create stunnel configmaps
+      k8s:
+        kubeconfig: "{{ dst_kubeconfig }}"
+        state: present
+        definition: "{{ dst_stunnel }}"
+      with_items: "{{ pvcs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
+  
+  - when: "'routes.openshift.io' not in lookup('k8s', cluster_info='api_groups', kubeconfig=src_kubeconfig)"
+    block:
+    - name: Create stunnel k8s configmaps
+      k8s:
+        kubeconfig: "{{ dst_kubeconfig }}"
+        state: present
+        definition: "{{ dst_k8s_stunnel }}"
+      with_items: "{{ pvcs.resources }}"
+      loop_control:
+        label: "{{ item.metadata.name }}"
 
   - name: Create stunnel secret
     k8s:

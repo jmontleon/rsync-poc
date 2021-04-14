@@ -1,7 +1,8 @@
 # Prerequisites
 
 ```
-sudo dnf -y install ansible
+sudo dnf -y install ansible python3-github git
+ansible-galaxy collection install community.general
 ansible-galaxy collection install community.kubernetes
 ```
 

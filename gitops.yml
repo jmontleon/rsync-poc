@@ -1,0 +1,210 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files:
+  - config.yml
+  tasks:
+  - name: Find resource definitions
+    find:
+      paths: "{{ playbook_dir }}/output/{{ namespace }}"
+      excludes: 'Endpoints*,LimitRange*,RoleBinding*,ServiceAccount*,*token*'
+    register: transformed_resources
+
+  - name: Create namespace directory
+    file:
+      state: directory
+      path: "{{ playbook_dir }}/{{ namespace }}"
+
+  - name: Create a Github repository
+    community.general.github_repo:
+      access_token: "{{ lookup('env', 'GH_TOKEN') }}"
+      name: "{{ git_project }}"
+      description: "{{ namespace }} ArgoCD Repo"
+      private: no
+      state: present
+    when: create_github_repo
+
+  - name: Check if repo is cloned
+    stat:
+      path: "{{ playbook_dir }}/{{ namespace }}/gitops"
+    register: gitops_dir
+
+  - name: Checkout git repo
+    shell: git clone "{{ git_server }}:{{ git_org }}/{{ git_project }}" "{{ playbook_dir }}/{{ namespace }}/gitops"
+    when: not(gitops_dir.stat.isdir is defined and gitops_dir.stat.isdir)
+    # The git module produces an error when cloning an empty repo
+    # This is not considered a bug...
+    #git:
+    #  repo: "{{ git_server }}:{{ git_org }}/{{ git_project }}"
+    #  dest: "{{ playbook_dir }}/{{ namespace }}/gitops"
+    #  version: origin/master
+    #ignore_errors: true
+
+  - name: Create gitops base directory
+    file:
+      state: directory
+      path: "{{ playbook_dir }}/{{ namespace }}/gitops/base"
+
+  - name: Copy transformed files to gitops
+    copy:
+      src: "{{ item.path }}"
+      dest: "{{ playbook_dir }}/{{ namespace }}/gitops/base"
+    with_items: "{{ transformed_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Find PVC definitions
+    find:
+      paths: "{{ playbook_dir }}/{{ namespace }}/gitops/base/"
+      patterns: 'PersistentVolumeClaim*'
+    register: pvcs
+
+  - name: Remove PVC PV annotations
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'pv.kubernetes.io'
+    with_items: "{{ pvcs.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Remove PVC volumenames
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'volumeName:.*'
+    with_items: "{{ pvcs.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Find resource definitions
+    find:
+      paths: "{{ playbook_dir }}/{{ namespace }}/gitops/base"
+      excludes: 'argocd-rolebinding.yaml,kustomization.yaml'
+    register: gitops_resources
+
+  - name: Remove namespace from resource definitions
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'namespace:.*'
+    with_items: "{{ gitops_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Remove uid from resource definitions
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'uid:.*'
+    with_items: "{{ gitops_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Remove resourceVersion from resource definitions
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'resourceVersion:.*'
+    with_items: "{{ gitops_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Remove selfLink from resource definitions
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'selfLink:.*'
+    with_items: "{{ gitops_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Remove generation from resource definitions
+    lineinfile:
+      path: "{{ item.path }}"
+      state: absent
+      regexp: 'generation:.*'
+    with_items: "{{ gitops_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Remove status from resource definitions
+    replace:
+      path: "{{ item.path }}"
+      after: 'status:'
+      regexp: '^(.*)$'
+    with_items: "{{ gitops_resources.files }}"
+    loop_control:
+      label: "{{ item.path | basename }}"
+
+  - name: Create Kustomize File
+    copy:
+      content: |
+               apiVersion: kustomize.config.k8s.io/v1beta1
+               kind: Kustomization
+               resources:
+               - argocd-rolebinding.yaml
+               {% for resource in gitops_resources.files %}
+               - {{ resource.path | basename }}
+               {% endfor %}
+      dest: "{{ playbook_dir }}/{{ namespace }}/gitops/base/kustomization.yaml"
+
+  - name: Create ArgoCD RoleBinding
+    copy:
+      content: |
+               apiVersion: rbac.authorization.k8s.io/v1
+               kind: RoleBinding
+               metadata:
+                 name: argocd-admin-role-binding
+               roleRef:
+                 apiGroup: rbac.authorization.k8s.io
+                 kind: ClusterRole
+                 name: admin
+               subjects:
+               - kind: ServiceAccount
+                 name: argocd-cluster-argocd-application-controller
+                 namespace: openshift-gitops
+      dest: "{{ playbook_dir }}/{{ namespace }}/gitops/base/argocd-rolebinding.yaml"
+
+  - name: Get cluster info
+    community.kubernetes.k8s_cluster_info:
+      kubeconfig: "{{ dst_kubeconfig }}"
+    register: cluster_info
+
+  - name: Create ArgoCD Application Definition
+    copy:
+      content: |
+               apiVersion: argoproj.io/v1alpha1
+               kind: Application
+               metadata:
+                 name: robot-shop
+                 namespace: openshift-gitops
+               operation:
+                 initiatedBy:
+                   automated: true
+               spec:
+                 destination:
+                   namespace: {{ namespace }}
+                   server: {{ server }}
+                 ignoreDifferences:
+                 - group: apps.openshift.io
+                   jsonPointers:
+                   - /spec/template/spec/containers/0/resources
+                   - /spec/template/spec/containers/0/terminationMessagePath
+                   - /spec/template/spec/containers/0/terminationMessagePolicy
+                   - /spec/template/spec/containers/1/image
+                   - /spec/template/spec/containers/1/ports/0/protocol
+                   - /spec/template/spec/containers/1/terminationMessagePath
+                   - /spec/template/spec/containers/1/terminationMessagePolicy
+                   kind: DeploymentConfig
+                 project: default
+                 source:
+                   path: ./base
+                   repoURL: https://github.com/{{ git_org }}/{{ git_project }}
+                   targetRevision: HEAD
+                 syncPolicy:
+                   automated:
+                     prune: true
+                     selfHeal: true
+                   syncOptions:
+                   - CreateNamespace=true
+      dest: "{{ playbook_dir }}/{{ namespace }}/gitops/{{ namespace }}-argocd-application.yml"
